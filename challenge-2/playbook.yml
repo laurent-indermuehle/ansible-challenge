@@ -1,6 +1,7 @@
 ---
-- hosts: all
-  sudo: true
+- name: Main Playbook
+  hosts: all
+  become: true
   roles:
     - system
     - nginx-with-ssl
