@@ -2,65 +2,165 @@
 - name: Spin up VM
   hosts: localhost
   gather_facts: false
+  become: true
   tasks:
     - name: Create security group
       amazon.aws.ec2_security_group:
+        name: SAMBA
+        description: Sec group for SAMBA file server.
+        access_key: "{{ aws_access_key }}"
+        secret_key: "{{ aws_secret_key }}"
+        region: eu-west-1
+        rules:
+          - proto: tcp
+            from_port: 139
+            to_port: 139
+            cidr_ip: 0.0.0.0/0
+          - proto: tcp
+            from_port: 445
+            to_port: 445
+            cidr_ip: 0.0.0.0/0
+          - proto: tcp
+            from_port: 22
+            to_port: 22
+            cidr_ip: 0.0.0.0/24
 
     - name: Launch EC2 instance
       amazon.aws.ec2_instance:
-      # Your AWS key pair name is Ubuntu_key
+        # Your AWS key pair name is Ubuntu_key
+        name: "samba"
+        key_name: "Ubuntu_key"
+        access_key: "{{ aws_access_key }}"
+        secret_key: "{{ aws_secret_key }}"
+        image_id: ami-0d101c1d6138a1763
+        region: eu-west-1
+        security_group: SAMBA
+        wait: true
+      register: ec2_instance
+
     - name: Add VM as a host to VM_instance group
       ansible.builtin.add_host:
+        name: "{{ ec2_instance.instances[0].public_ip_address }}"
         groups: VM_instance
 
     - name: Wait for SSH to come up
+      delegate_to: ec2_instance.ip
       ansible.builtin.wait_for:
         host: "{{ item }}"
+        port: 22
         state: started
       loop: "{{ groups['VM_instance'] }}"
 
 - name: Spin up samba
-  hosts: VM_instance
+  hosts: "{{ ec2_instance.instances[0].public_ip_address }}"
   gather_facts: false
+  become: true
   tasks:
     - name: System up-to date
       ansible.builtin.apt:
+        upgrade: 'safe'
+        update_cache: true
+        state: present
 
     - name: Install Samba
       ansible.builtin.apt:
+        package: samba
+        state: present
 
     - name: Remove Unnecessary Services
       ansible.builtin.apt:
+        package:
+          - telnet
+          - rsh-server
+          - cups
+        state: absent
 
     - name: Ensure the SAMBA user exists
       ansible.builtin.user:
+        name: samba
+        state: present
 
     - name: Create a Samba shared directory
       ansible.builtin.file:
+        path: /srv/shared
+        state: directory
+        mode: '0755'
+        owner: samba
+        group: samba
 
     - name: Configure Samba
       ansible.builtin.template:
+        src: templates/smb.conf.j2
+        dest: /etc/samba/smb.conf
+        mode: '0640'
+        owner: samba
+        group: samba
 
     - name: Restart Samba
       ansible.builtin.service:
+        name: smbd
+        state: restarted
 
     - name: Banner sshd config
       ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        line: |-
+          You are accessing a U.S. Government (USG) Information System (IS) that is provided for  SG-authorized use only.
+          By using this IS (which includes any device attached to this IS), you consent
+          to the following conditions:
+          -The USG routinely intercepts and monitors communications on this IS for
+          purposes including, but not limited to, penetration testing, COMSEC
+          monitoring, network operations and defense, personnel misconduct (PM), law
+          enforcement (LE), and counterintelligence (CI) investigations.
+          -At any time, the USG may inspect and seize data stored on this IS.
+          -Communications using, or data stored on, this IS are not private, are
+          subject to routine monitoring, interception, and search, and may be disclosed
+          or used for any USG-authorized purpose.
+          -This IS includes security measures (e.g., authentication and access
+          controls) to protect USG interests--not for your personal benefit or privacy.
+          -Notwithstanding the above, using this IS does not constitute consent to PM,
+          LE or CI investigative searching or monitoring of the content of privileged
+          communications, or work product, related to personal representation or
+          services by attorneys, psychotherapists, or clergy, and their assistants.
+          Such communications and work product are private and confidential. See User
+          Agreement for details.
+        owner: root
+        group: root
+        mode: '0644'
 
     - name: banner-message-text
       ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        line: 'Banner /etc/issue'
+        insertafter: 'Banner'
+        owner: root
+        group: root
+        mode: '0600'
 
     - name: Restart ssh
       ansible.builtin.service:
+        name: ssh
+        state: reloaded
 
     - name: Ensure NTP package is installed
       ansible.builtin.package:
+        name: ntp
+        state: present
 
     - name: Disable chrony if it is running but ntp is enabled
       ansible.builtin.service:
+        name: chrony
+        state: stopped
+        enabled: false
 
     - name: Ensure IPv6 status /Checking IPv6 module status
       ansible.builtin.iptables:
+        flush: true
+        chain: INPUT
+        protocol: tcp
+        ip_version: ipv4
 
     - name: Install AIDE
       ansible.builtin.package:
+        name: aide
+        state: present
