@@ -8,3 +8,4 @@ vm_security_group: "my-group"
 vm_network: "ostack2"
 vm_ssh_key_file: "/home/user/.ssh/openstack.key"
 vm_ssh_user: "ubuntu"
+...
